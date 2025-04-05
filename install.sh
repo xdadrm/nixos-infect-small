@@ -190,13 +190,22 @@ lustrateSystem() {
   # Activate the system
   /nix/var/nix/profiles/system/bin/switch-to-configuration boot
 
-cat > /root/cleanup_old < EOF
-  # Delete /old-root
-  echo "Cleaning up $OLD_ROOT..."
-  chattr -i /root/old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf || true
-  rm -rf /old-root
+  # Create a cleanup script to remove /old-root after reboot
+  mkdir -p /root/bin
+  cat > /root/bin/cleanup_old_root << EOF
+#! /usr/bin/env bash
+# Script to remove /old-root directory after NixOS installation
+echo "Cleaning up /old-root..."
+chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf 2>/dev/null || true
+rm -rf /old-root
+echo "Cleanup complete!"
 EOF
-
+  chmod +x /root/bin/cleanup_old_root
+  
+  # Remove /old-root now if possible
+  echo "Attempting to clean up /old-root before reboot..."
+  chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf 2>/dev/null || true
+  rm -rf /old-root || echo "Could not remove /old-root now. Please run /root/bin/cleanup_old_root after reboot."
 }
 
 main() {
