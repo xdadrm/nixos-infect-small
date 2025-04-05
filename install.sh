@@ -198,16 +198,10 @@ cleanupOldRoot() {
 #!/usr/bin/env bash
 set -e
 
-# Find the old root (excluding special filesystems)
-OLD_ROOTS=$(find / -maxdepth 1 -name 'old_root*')
-for OLD_ROOT in $OLD_ROOTS; do
-  # Make sure we don't delete active mountpoints
-  mountpoint -q "$OLD_ROOT" && { echo "Error: $OLD_ROOT is a mountpoint"; exit 1; }
-  
-  echo "Cleaning up $OLD_ROOT..."
-  chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf
-  rm -rf "$OLD_ROOT"
-done
+# Delete /old-root
+echo "Cleaning up $OLD_ROOT..."
+chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf
+rm -rf /old-root
 
 # Remove this script from systemd
 systemctl disable cleanup-old-root.service
