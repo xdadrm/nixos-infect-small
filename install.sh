@@ -205,6 +205,7 @@ for OLD_ROOT in $OLD_ROOTS; do
   mountpoint -q "$OLD_ROOT" && { echo "Error: $OLD_ROOT is a mountpoint"; exit 1; }
   
   echo "Cleaning up $OLD_ROOT..."
+  chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf
   rm -rf "$OLD_ROOT"
 done
 
