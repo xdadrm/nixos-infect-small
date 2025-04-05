@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+
+# Minimal NixOS installation script
+
+set -e -o pipefail
+
+makeConf() {
+  # Skip if configuration already exists
+  [[ -e /etc/nixos/configuration.nix ]] && return 0
+
+  mkdir -p /etc/nixos
+  
+  # Get SSH keys
+  local IFS=$'\n'
+  for trypath in /root/.ssh/authorized_keys /home/$SUDO_USER/.ssh/authorized_keys $HOME/.ssh/authorized_keys; do
+    [[ -r "$trypath" ]] \
+    && keys=$(sed -E 's/^[^#].*[[:space:]]((sk-ssh|sk-ecdsa|ssh|ecdsa)-[^[:space:]]+)[[:space:]]+([^[:space:]]+)([[:space:]]*.*)$/\1 \3\4/' "$trypath") \
+    && [[ ! -z "$keys" ]] \
+    && break
+  done
+
+  # Create main configuration file
+  cat > /etc/nixos/configuration.nix << EOF
+{ ... }: {
+  imports = [
+    ./hardware-configuration.nix
+  ];
+
+  boot.tmp.cleanOnBoot = true;
+  zramSwap.enable = true;
+  networking.hostName = "$(hostname -s)";
+  networking.domain = "$(hostname -d)";
+  services.openssh.enable = true;
+  users.users.root.openssh.authorizedKeys.keys = [$(while read -r line; do
+    line=$(echo -n "$line" | sed 's/\r//g')
+    trimmed_line=$(echo -n "$line" | xargs)
+    echo -n "''$trimmed_line'' "
+  done <<< "$keys")];
+  system.stateVersion = "23.11";
+}
+EOF
+
+  # Configure boot loader
+  if [ -d /sys/firmware/efi ]; then
+    bootcfg=$(cat << EOF
+  boot.loader.grub = {
+    efiSupport = true;
+    efiInstallAsRemovable = true;
+    device = "nodev";
+  };
+  fileSystems."/boot" = { device = "$esp"; fsType = "vfat"; };
+EOF
+)
+  else
+    bootcfg=$(cat << EOF
+  boot.loader.grub.device = "$grubdev";
+EOF
+)
+  fi
+
+  # Create hardware configuration
+  availableKernelModules=('"ata_piix"' '"uhci_hcd"' '"xen_blkfront"')
+  if [[ "$(uname -m)" == "x86_64" ]]; then
+    availableKernelModules+=('"vmw_pvscsi"')
+  fi
+
+  cat > /etc/nixos/hardware-configuration.nix << EOF
+{ modulesPath, ... }:
+{
+  imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
+$bootcfg
+  boot.initrd.availableKernelModules = [ ${availableKernelModules[@]} ];
+  boot.initrd.kernelModules = [ "nvme" ];
+  fileSystems."/" = { device = "$rootfsdev"; fsType = "$rootfstype"; };
+}
+EOF
+}
+
+setupSwap() {
+  swapFile=$(mktemp /tmp/nixos-install.XXXXX.swp)
+  dd if=/dev/zero "of=$swapFile" bs=1M count=$((1*1024))
+  chmod 0600 "$swapFile"
+  mkswap "$swapFile"
+  swapon -v "$swapFile"
+}
+
+cleanupSwap() {
+  swapoff -a
+  rm -f /tmp/nixos-install.*.swp
+}
+
+prepareEnv() {
+  # Identify boot device
+  if [ -d /sys/firmware/efi ]; then
+    for d in /boot/EFI /boot/efi /boot; do
+      [[ ! -d "$d" ]] && continue
+      [[ "$d" == "$(df "$d" --output=target | sed 1d)" ]] \
+        && esp="$(df "$d" --output=source | sed 1d)" \
+        && break
+    done
+    for uuid in /dev/disk/by-uuid/*; do
+      [[ $(readlink -f "$uuid") == "$esp" ]] && esp=$uuid && break
+    done
+  else
+    for grubdev in /dev/vda /dev/sda /dev/xvda /dev/nvme0n1; do 
+      [[ -e $grubdev ]] && break
+    done
+  fi
+
+  # Get root filesystem device and type
+  rootfsdev=$(mount | grep "on / type" | awk '{print $1;}')
+  rootfstype=$(df $rootfsdev --output=fstype | sed 1d)
+
+  # Set environment variables
+  export USER="root"
+  export HOME="/root"
+
+  # Create nix directory
+  mkdir -p -m 0755 /nix
+}
+
+setupNixUsers() {
+  # Add nix build users
+  groupadd nixbld -g 30000 || true
+  for i in {1..10}; do
+    useradd -c "Nix build user $i" -d /var/empty -g nixbld -G nixbld -M -N -r -s "$(which nologin)" "nixbld$i" || true
+  done
+}
+
+installNix() {
+  # Install Nix package manager
+  curl -L "https://nixos.org/nix/install" | sh -s -- --no-channel-add
+
+  # Source nix environment
+  source ~/.nix-profile/etc/profile.d/nix.sh
+
+  # Set up NixOS channel
+  nix-channel --remove nixpkgs
+  nix-channel --add "https://nixos.org/channels/nixos-23.11" nixos
+  nix-channel --update
+
+  # Install NixOS
+  nix-env --set \
+    -I nixpkgs=$(realpath $HOME/.nix-defexpr/channels/nixos) \
+    -f '<nixpkgs/nixos>' \
+    -p /nix/var/nix/profiles/system \
+    -A system
+
+  # Clean up nix installer
+  rm -f /nix/var/nix/profiles/default*
+  /nix/var/nix/profiles/system/sw/bin/nix-collect-garbage
+}
+
+lustrateSystem() {
+  # Handle resolv.conf
+  [[ -L /etc/resolv.conf ]] && mv /etc/resolv.conf /etc/resolv.conf.lnk && cat /etc/resolv.conf.lnk > /etc/resolv.conf
+
+  # Mark the system as NixOS
+  touch /etc/NIXOS
+  echo etc/nixos                  >> /etc/NIXOS_LUSTRATE
+  echo etc/resolv.conf            >> /etc/NIXOS_LUSTRATE
+  echo root/.nix-defexpr/channels >> /etc/NIXOS_LUSTRATE
+  (cd / && ls etc/ssh/ssh_host_*_key* || true) >> /etc/NIXOS_LUSTRATE
+
+  # Handle boot directory
+  rm -rf /boot.bak
+  if [ -d /sys/firmware/efi ]; then
+    umount "$esp" || true
+  fi
+
+  mv /boot /boot.bak || { cp -a /boot /boot.bak; rm -rf /boot/*; umount /boot || true; }
+  if [ -d /sys/firmware/efi ]; then
+    mkdir -p /boot
+    mount "$esp" /boot
+    find /boot -depth ! -path /boot -exec rm -rf {} +
+  fi
+  
+  # Activate the system
+  /nix/var/nix/profiles/system/bin/switch-to-configuration boot
+}
+
+cleanupOldRoot() {
+  # Create cleanup script to run on first boot
+  mkdir -p /etc/nixos/scripts
+  cat > /etc/nixos/scripts/cleanup-old-root.sh << 'EOF'
+#!/usr/bin/env bash
+set -e
+
+# Find the old root (excluding special filesystems)
+OLD_ROOTS=$(find / -maxdepth 1 -name 'old_root*')
+for OLD_ROOT in $OLD_ROOTS; do
+  # Make sure we don't delete active mountpoints
+  mountpoint -q "$OLD_ROOT" && { echo "Error: $OLD_ROOT is a mountpoint"; exit 1; }
+  
+  echo "Cleaning up $OLD_ROOT..."
+  rm -rf "$OLD_ROOT"
+done
+
+# Remove this script from systemd
+systemctl disable cleanup-old-root.service
+rm -f /etc/systemd/system/cleanup-old-root.service
+rm -f "$0"
+
+echo "Old root cleanup complete"
+EOF
+  chmod +x /etc/nixos/scripts/cleanup-old-root.sh
+
+  # Create systemd service for cleanup
+  cat > /etc/nixos/cleanup-service.nix << 'EOF'
+{ config, lib, pkgs, ... }:
+{
+  systemd.services.cleanup-old-root = {
+    description = "Clean up old root filesystem";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.bash}/bin/bash /etc/nixos/scripts/cleanup-old-root.sh";
+      RemainAfterExit = true;
+    };
+  };
+}
+EOF
+
+  # Add the cleanup service to the configuration
+  sed -i '/imports = \[/a \ \ \ \ ./cleanup-service.nix' /etc/nixos/configuration.nix
+}
+
+main() {
+  # Check if running as root
+  [[ "$(whoami)" == "root" ]] || { echo "Error: Must run as root"; exit 1; }
+  
+  # Main installation process
+  prepareEnv
+  setupSwap
+  setupNixUsers
+  makeConf
+  installNix
+  cleanupOldRoot
+  lustrateSystem
+  cleanupSwap
+  
+  echo "NixOS installation complete. Rebooting system..."
+  reboot
+}
+
+main
