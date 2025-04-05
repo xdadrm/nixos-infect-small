@@ -190,10 +190,12 @@ lustrateSystem() {
   # Activate the system
   /nix/var/nix/profiles/system/bin/switch-to-configuration boot
 
+cat > /root/cleanup_old < EOF
   # Delete /old-root
   echo "Cleaning up $OLD_ROOT..."
-  chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf || true
+  chattr -i /root/old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf || true
   rm -rf /old-root
+EOF
 
 }
 
