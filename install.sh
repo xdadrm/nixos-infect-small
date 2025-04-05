@@ -189,48 +189,12 @@ lustrateSystem() {
   
   # Activate the system
   /nix/var/nix/profiles/system/bin/switch-to-configuration boot
-}
 
-cleanupOldRoot() {
-  # Create cleanup script to run on first boot
-  mkdir -p /etc/nixos/scripts
-  cat > /etc/nixos/scripts/cleanup-old-root.sh << 'EOF'
-#!/usr/bin/env bash
-set -e
+  # Delete /old-root
+  echo "Cleaning up $OLD_ROOT..."
+  chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf || true
+  rm -rf /old-root
 
-# Delete /old-root
-echo "Cleaning up $OLD_ROOT..."
-chattr -i /old-root/etc/udev/rules.d/99-vultr-fix-virtio.rules /old-root/usr/lib/sysctl.d/90-vultr.conf
-rm -rf /old-root
-
-# Remove this script from systemd
-systemctl disable cleanup-old-root.service
-rm -f /etc/systemd/system/cleanup-old-root.service
-rm -f "$0"
-
-echo "Old root cleanup complete"
-EOF
-  chmod +x /etc/nixos/scripts/cleanup-old-root.sh
-
-  # Create systemd service for cleanup
-  cat > /etc/nixos/cleanup-service.nix << 'EOF'
-{ config, lib, pkgs, ... }:
-{
-  systemd.services.cleanup-old-root = {
-    description = "Clean up old root filesystem";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${pkgs.bash}/bin/bash /etc/nixos/scripts/cleanup-old-root.sh";
-      RemainAfterExit = true;
-    };
-  };
-}
-EOF
-
-  # Add the cleanup service to the configuration
-  sed -i '/imports = \[/a \ \ \ \ ./cleanup-service.nix' /etc/nixos/configuration.nix
 }
 
 main() {
@@ -243,7 +207,6 @@ main() {
   setupNixUsers
   makeConf
   installNix
-  cleanupOldRoot
   lustrateSystem
   cleanupSwap
   
