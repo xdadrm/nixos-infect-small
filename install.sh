@@ -19,6 +19,10 @@ makeConf() {
     && break
   done
 
+  # Use NIX_CHANNEL environment variable or default to nixos-24.05
+  NIX_CHANNEL="${NIX_CHANNEL:-nixos-24.05}"
+  STATE_VERSION=$(echo "$NIX_CHANNEL" | sed -E 's/nixos-([0-9]+\.[0-9]+).*/\1/')
+
   # Create main configuration file
   cat > /etc/nixos/configuration.nix << EOF
 { ... }: {
@@ -36,7 +40,7 @@ makeConf() {
     trimmed_line=$(echo -n "$line" | xargs)
     echo -n "''$trimmed_line'' "
   done <<< "$keys")];
-  system.stateVersion = "23.11";
+  system.stateVersion = "$STATE_VERSION";
 }
 EOF
 
@@ -115,6 +119,9 @@ prepareEnv() {
   export USER="root"
   export HOME="/root"
 
+  # Use NIX_CHANNEL environment variable or default to nixos-24.05
+  export NIX_CHANNEL="${NIX_CHANNEL:-nixos-24.05}"
+
   # Create nix directory
   mkdir -p -m 0755 /nix
 }
@@ -132,16 +139,21 @@ installNix() {
   curl -L "https://nixos.org/nix/install" | sh -s -- --no-channel-add
 
   # Source nix environment
+  # shellcheck disable=SC1090
   source ~/.nix-profile/etc/profile.d/nix.sh
 
   # Set up NixOS channel
-  nix-channel --remove nixpkgs
-  nix-channel --add "https://nixos.org/channels/nixos-23.11" nixos
+  nix-channel --remove nixpkgs || true
+  nix-channel --add "https://nixos.org/channels/$NIX_CHANNEL" nixos
   nix-channel --update
 
-  # Install NixOS
+  # Set NIXOS_CONFIG environment variable
+  export NIXOS_CONFIG="/etc/nixos/configuration.nix"
+
+  # Install NixOS - with proper paths to prevent "file 'nixos-config' was not found" error
   nix-env --set \
-    -I nixpkgs=$(realpath $HOME/.nix-defexpr/channels/nixos) \
+    -I nixpkgs="$HOME/.nix-defexpr/channels/nixos" \
+    -I nixos-config="$NIXOS_CONFIG" \
     -f '<nixpkgs/nixos>' \
     -p /nix/var/nix/profiles/system \
     -A system
