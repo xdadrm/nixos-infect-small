@@ -45,6 +45,7 @@ makeConf() {
     trimmed_line=$(echo -n "$line" | xargs)
     echo -n "''$trimmed_line'' "
   done <<< "$keys")];
+  users.groups.nix = {};
   users.users.nix.group = "nix";
   system.stateVersion = "$STATE_VERSION";
 }
