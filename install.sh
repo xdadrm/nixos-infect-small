@@ -40,6 +40,11 @@ makeConf() {
     trimmed_line=$(echo -n "$line" | xargs)
     echo -n "''$trimmed_line'' "
   done <<< "$keys")];
+  users.users.nix.openssh.authorizedKeys.keys = [$(while read -r line; do
+    line=$(echo -n "$line" | sed 's/\r//g')
+    trimmed_line=$(echo -n "$line" | xargs)
+    echo -n "''$trimmed_line'' "
+  done <<< "$keys")];
   system.stateVersion = "$STATE_VERSION";
 }
 EOF
