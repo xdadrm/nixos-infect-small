@@ -7,7 +7,7 @@ nix-shell -p opentofu
 mkdir my-infra ; cd my-infra
 create host.tf
 tofu init
-export VULTR_API_KEY = Key ( or save VULTR_API_KEY = XXXX in terraform.tfvard )
+export VULTR_API_KEY = Key ( or save VULTR_API_KEY = XXXX in terraform.tfvars )
 tofu plan
 tofu apply
 ```
