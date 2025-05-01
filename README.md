@@ -2,6 +2,7 @@
 
 
 Intended to install NixOS on Vultr VPS using OpenTofu (Terraform):
+```
 nix-shell -p opentofu
 mkdir my-infra ; cd my-infra
 create host.tf
@@ -9,7 +10,7 @@ tofu init
 export VULTR_API_KEY = Key ( or save VULTR_API_KEY = XXXX in terraform.tfvard )
 tofu plan
 tofu apply
-
+```
 
 host.tf
 ```
