@@ -5,11 +5,25 @@ Intended to install NixOS on Vultr VPS using OpenTofu (Terraform):
 ```
 nix-shell -p opentofu
 mkdir my-infra ; cd my-infra
-create host.tf
+```
+
+create host.tf and cloud-config.yaml
+
+```
 tofu init
 export VULTR_API_KEY = Key ( or save VULTR_API_KEY = XXXX in terraform.tfvars )
 tofu plan
 tofu apply
+```
+
+Files:
+
+cloud-config.yaml
+```
+#cloud-config
+
+runcmd:
+  - curl https://raw.githubusercontent.com/xdadrm/nixos-infect-small/refs/heads/main/install.sh | NIX_CHANNEL=nixos-24.05 bash
 ```
 
 host.tf
